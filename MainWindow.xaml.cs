@@ -141,7 +141,7 @@ public partial class MainWindow : Window
                 var kind = GetFileColumnKind(column.Name);
                 if (kind == FileColumnKind.Symbol)
                 {
-                    values[column.Name] = GetSelectedTargetSymbolLibraryStoredValue();
+                    values[column.Name] = GetSymbolDatabaseValue(column.Name);
                 }
                 else if (kind != FileColumnKind.None && _selectedFiles.TryGetValue(kind, out var files) && files.Count > 0)
                 {
@@ -155,6 +155,7 @@ public partial class MainWindow : Window
 
             await _databaseService.InsertRowAsync(_settings, tableName, values, _columns);
             ClearDynamicForm();
+            ClearSelectedFiles();
             SetStatus("器件已写入数据库，相关文件已入库。表单已清空，请重新生成表单后继续提交。");
             MessageBox.Show(this, "提交完成。", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
         }
@@ -224,7 +225,6 @@ public partial class MainWindow : Window
 
     private void TargetSymbolLibrary_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        ApplySelectedFileToForm(FileColumnKind.Symbol);
     }
 
     private void OpenSymbolLibraryFolders_Click(object sender, RoutedEventArgs e)
@@ -391,21 +391,28 @@ public partial class MainWindow : Window
         _columns = [];
     }
 
+    private void ClearSelectedFiles()
+    {
+        _selectedFiles.Clear();
+        _sourceSymbolLibraryPath = null;
+        FootprintFilesBox.Clear();
+        FootprintFilesBox.ToolTip = null;
+        SourceSymbolLibraryBox.Clear();
+        SourceSymbolLibraryBox.ToolTip = null;
+        Model3DFileBox.Clear();
+        Model3DFileBox.ToolTip = null;
+        PinFileBox.Clear();
+        PinFileBox.ToolTip = null;
+    }
+
     private void ApplySelectedFilesToForm()
     {
         ApplySelectedFileToForm(FileColumnKind.Footprint);
-        ApplySelectedFileToForm(FileColumnKind.Symbol);
         ApplySelectedFileToForm(FileColumnKind.Model3D);
     }
 
     private void ApplySelectedFileToForm(FileColumnKind kind)
     {
-        if (kind == FileColumnKind.Symbol)
-        {
-            ApplySelectedSymbolLibraryToForm();
-            return;
-        }
-
         if (kind == FileColumnKind.Pin || !_selectedFiles.TryGetValue(kind, out var files) || files.Count == 0)
         {
             return;
@@ -422,34 +429,27 @@ public partial class MainWindow : Window
         input.ToolTip = string.Join(Environment.NewLine, databaseFiles);
     }
 
-    private void ApplySelectedSymbolLibraryToForm()
+    private string? GetSymbolDatabaseValue(string columnName)
     {
-        var targetPath = GetSelectedTargetSymbolLibraryPath();
-        if (string.IsNullOrWhiteSpace(targetPath))
-        {
-            return;
-        }
-
-        var columnName = _columns.Select(c => c.Name).FirstOrDefault(name => GetFileColumnKind(name) == FileColumnKind.Symbol);
-        if (columnName is null || !_inputs.TryGetValue(columnName, out var input))
-        {
-            return;
-        }
-
-        input.Text = GetSelectedTargetSymbolLibraryStoredValue() ?? string.Empty;
-        input.ToolTip = targetPath;
-    }
-
-    private string? GetSelectedTargetSymbolLibraryStoredValue()
-    {
-        var targetPath = GetSelectedTargetSymbolLibraryPath();
-        if (string.IsNullOrWhiteSpace(targetPath))
+        if (!_inputs.TryGetValue(columnName, out var input))
         {
             return null;
         }
 
-        var storedValue = _settings.StoreRelativeLibraryFileName ? Path.GetFileName(targetPath) : targetPath;
-        return RemoveFileExtension(storedValue);
+        var symbolName = input.Text.Trim();
+        if (string.IsNullOrWhiteSpace(symbolName))
+        {
+            return null;
+        }
+
+        var targetPath = GetSelectedTargetSymbolLibraryPath();
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            return symbolName;
+        }
+
+        var libraryName = RemoveFileExtension(Path.GetFileName(targetPath));
+        return string.IsNullOrWhiteSpace(libraryName) ? symbolName : $"{libraryName}\\{symbolName}";
     }
 
     private static IReadOnlyList<string> GetDatabaseSourceFiles(IReadOnlyList<string> files, FileColumnKind kind)

@@ -11,9 +11,11 @@
     <FileVersion>0.1.0.0</FileVersion>
     <Authors>linqingfeng</Authors>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <ApplicationIcon>Assets\AppIcon.ico</ApplicationIcon>
   </PropertyGroup>
 
   <ItemGroup>
+    <Resource Include="Assets\AppIcon.ico" />
     <PackageReference Include="MySqlConnector" Version="2.4.0" />
   </ItemGroup>
 
