@@ -113,6 +113,60 @@ public sealed class DatabaseService
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task<IReadOnlyDictionary<string, string?>?> GetSingleRowByColumnAsync(AppSettings settings, string tableName, string filterColumn, string filterValue, IReadOnlyList<ColumnInfo> columns)
+    {
+        await using var connection = await OpenConnectionAsync(settings);
+        var selectColumns = string.Join(", ", columns.Select(c => EscapeIdentifier(c.Name)));
+        var sql = $"select {selectColumns} from {EscapeIdentifier(tableName)} where {EscapeIdentifier(filterColumn)} = @filterValue limit 1";
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@filterValue", filterValue);
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            return null;
+        }
+
+        var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < columns.Count; i++)
+        {
+            values[columns[i].Name] = reader.IsDBNull(i) ? null : reader.GetValue(i).ToString();
+        }
+
+        return values;
+    }
+
+    public async Task UpdateRowAsync(AppSettings settings, string tableName, IReadOnlyDictionary<string, string?> values, IReadOnlyList<ColumnInfo> columns, string keyColumnName, string? keyValue)
+    {
+        if (string.IsNullOrWhiteSpace(keyValue))
+        {
+            throw new InvalidOperationException("主键值为空，无法更新记录。");
+        }
+
+        var writableColumns = columns.Where(c => !c.IsAutoIncrement && !c.IsGenerated && !c.IsPrimaryKey && values.ContainsKey(c.Name)).ToList();
+        if (writableColumns.Count == 0)
+        {
+            throw new InvalidOperationException("没有可更新的列。");
+        }
+
+        await using var connection = await OpenConnectionAsync(settings);
+        var setClause = string.Join(", ", writableColumns.Select((c, index) => $"{EscapeIdentifier(c.Name)} = @p{index}"));
+        var sql = $"update {EscapeIdentifier(tableName)} set {setClause} where {EscapeIdentifier(keyColumnName)} = @keyValue";
+        await using var command = new MySqlCommand(sql, connection);
+        for (var i = 0; i < writableColumns.Count; i++)
+        {
+            var column = writableColumns[i];
+            var value = values[column.Name];
+            command.Parameters.AddWithValue("@p" + i, string.IsNullOrWhiteSpace(value) ? DBNull.Value : value);
+        }
+
+        command.Parameters.AddWithValue("@keyValue", keyValue);
+        var affected = await command.ExecuteNonQueryAsync();
+        if (affected == 0)
+        {
+            throw new InvalidOperationException("未找到需要更新的记录，可能已被删除。");
+        }
+    }
+
     private static async Task<MySqlConnection> OpenConnectionAsync(AppSettings settings)
     {
         var builder = new MySqlConnectionStringBuilder

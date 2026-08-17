@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
+using System.Windows.Media;
 using Microsoft.Win32;
 using CadenceCisLibraryManager.Models;
 using CadenceCisLibraryManager.Services;
@@ -17,7 +19,12 @@ public partial class MainWindow : Window
     private readonly Dictionary<FileColumnKind, List<string>> _selectedFiles = [];
     private string? _sourceSymbolLibraryPath;
     private IReadOnlyList<ColumnInfo> _columns = [];
+    private string? _loadedTableName;
     private AppSettings _settings = new();
+    private string? _editingKeyColumn;
+    private string? _editingKeyValue;
+
+    private sealed record RecordFileItem(string Title, string Path, bool Exists);
 
     public MainWindow()
     {
@@ -28,7 +35,7 @@ public partial class MainWindow : Window
     {
         _settings = await _settingsService.LoadAsync();
         LoadTargetSymbolLibraries();
-        SetStatus("设置已加载。请先浏览文件，再读取表并生成表单。");
+        SetStatus("设置已加载。请先读取表并生成表单。");
     }
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
@@ -72,6 +79,10 @@ public partial class MainWindow : Window
             if (tables.Count > 0)
             {
                 TableComboBox.SelectedIndex = 0;
+            }
+            else
+            {
+                ClearDynamicForm();
             }
 
             SetStatus($"已读取 {tables.Count} 张表。");
@@ -117,6 +128,68 @@ public partial class MainWindow : Window
         }
     }
 
+    private async void FindRecord_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var partNumberValue = PartNumberSearchBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(partNumberValue))
+            {
+                MessageBox.Show(this, "请输入要查找的 Part Number。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var resolvedTable = ResolveTableNameByPartNumber(partNumberValue);
+            if (string.IsNullOrWhiteSpace(resolvedTable))
+            {
+                MessageBox.Show(this, "无法从 Part Number 前缀识别对应表，请检查设置中的表前缀。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            await SelectTableAsync(resolvedTable);
+            await EnsureColumnsLoadedAsync();
+
+            var partNumberColumn = _databaseService.FindPartNumberColumn(_columns, _settings);
+            if (partNumberColumn is null)
+            {
+                MessageBox.Show(this, "当前表未识别到 Part Number 字段，请在设置中配置。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var tableName = GetSelectedTableName();
+            var row = await _databaseService.GetSingleRowByColumnAsync(_settings, tableName, partNumberColumn, partNumberValue, _columns);
+            if (row is null)
+            {
+                ResetEditMode();
+                MessageBox.Show(this, "未找到对应器件记录。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var keyColumn = _columns.FirstOrDefault(c => c.IsPrimaryKey)?.Name;
+            if (keyColumn is null || !row.TryGetValue(keyColumn, out var keyValue) || string.IsNullOrWhiteSpace(keyValue))
+            {
+                throw new InvalidOperationException("当前表缺少可用主键，无法进入编辑模式。");
+            }
+
+            foreach (var input in _inputs)
+            {
+                if (row.TryGetValue(input.Key, out var value))
+                {
+                    input.Value.Text = value ?? string.Empty;
+                }
+            }
+
+            _editingKeyColumn = keyColumn;
+            _editingKeyValue = keyValue;
+            ShowRecordFiles(row);
+            SetStatus($"已加载记录：{partNumberValue}（编辑模式）");
+        }
+        catch (Exception ex)
+        {
+            ShowError("查找记录失败：" + ex.Message);
+        }
+    }
+
     private async void Submit_Click(object sender, RoutedEventArgs e)
     {
         try
@@ -153,11 +226,22 @@ public partial class MainWindow : Window
                 }
             }
 
-            await _databaseService.InsertRowAsync(_settings, tableName, values, _columns);
+            if (!string.IsNullOrWhiteSpace(_editingKeyColumn) && !string.IsNullOrWhiteSpace(_editingKeyValue))
+            {
+                await _databaseService.UpdateRowAsync(_settings, tableName, values, _columns, _editingKeyColumn, _editingKeyValue);
+                MessageBox.Show(this, "更新完成。", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                SetStatus("器件记录已更新。表单已清空，请重新生成表单后继续操作。");
+            }
+            else
+            {
+                await _databaseService.InsertRowAsync(_settings, tableName, values, _columns);
+                MessageBox.Show(this, "提交完成。", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+                SetStatus("器件已写入数据库，相关文件已入库。表单已清空，请重新生成表单后继续提交。");
+            }
+
             ClearDynamicForm();
             ClearSelectedFiles();
-            SetStatus("器件已写入数据库，相关文件已入库。表单已清空，请重新生成表单后继续提交。");
-            MessageBox.Show(this, "提交完成。", "成功", MessageBoxButton.OK, MessageBoxImage.Information);
+            ResetEditMode();
         }
         catch (OperationCanceledException)
         {
@@ -331,6 +415,8 @@ public partial class MainWindow : Window
         {
             var tableName = GetSelectedTableName();
             _columns = await _databaseService.GetColumnsAsync(_settings, tableName);
+            _loadedTableName = tableName;
+            ResetEditMode();
             BuildDynamicForm(_columns);
             ApplySelectedFilesToForm();
             await GenerateInitialPartNumberAsync(tableName);
@@ -344,7 +430,8 @@ public partial class MainWindow : Window
 
     private async Task EnsureColumnsLoadedAsync()
     {
-        if (_columns.Count == 0)
+        var selectedTable = GetSelectedTableName();
+        if (_columns.Count == 0 || !string.Equals(_loadedTableName, selectedTable, StringComparison.OrdinalIgnoreCase))
         {
             await LoadSelectedTableAsync();
         }
@@ -389,6 +476,139 @@ public partial class MainWindow : Window
         FormPanel.Children.Clear();
         _inputs.Clear();
         _columns = [];
+        _loadedTableName = null;
+        ClearRecordFiles();
+    }
+
+    private void ResetEditMode()
+    {
+        _editingKeyColumn = null;
+        _editingKeyValue = null;
+        ClearRecordFiles();
+    }
+
+    private void ShowRecordFiles(IReadOnlyDictionary<string, string?> row)
+    {
+        var symbolItems = GetRecordFileItems(row, FileColumnKind.Symbol, BuildSymbolFileItems).ToList();
+        var footprintItems = GetRecordFileItems(row, FileColumnKind.Footprint, BuildFootprintFileItems).ToList();
+        var model3DItems = GetRecordFileItems(row, FileColumnKind.Model3D, BuildModel3DFileItems).ToList();
+
+        RenderRecordFileGroup(SymbolFilesGroupBox, SymbolFilesPanel, symbolItems);
+        RenderRecordFileGroup(FootprintFilesGroupBox, FootprintFilesPanel, footprintItems);
+        RenderRecordFileGroup(Model3DFilesGroupBox, Model3DFilesPanel, model3DItems);
+    }
+
+    private IEnumerable<RecordFileItem> GetRecordFileItems(
+        IReadOnlyDictionary<string, string?> row,
+        FileColumnKind kind,
+        Func<string, IEnumerable<RecordFileItem>> builder)
+    {
+        foreach (var column in _columns)
+        {
+            if (GetFileColumnKind(column.Name) != kind || !row.TryGetValue(column.Name, out var value) || string.IsNullOrWhiteSpace(value))
+            {
+                continue;
+            }
+
+            foreach (var item in builder(value))
+            {
+                yield return item;
+            }
+        }
+    }
+
+    private void RenderRecordFileGroup(GroupBox groupBox, Panel panel, IReadOnlyList<RecordFileItem> items)
+    {
+        panel.Children.Clear();
+        groupBox.Visibility = items.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var item in items)
+        {
+            panel.Children.Add(CreateRecordFileButton(item));
+        }
+    }
+
+    private Button CreateRecordFileButton(RecordFileItem item)
+    {
+        var button = new Button
+        {
+            Content = item.Exists ? item.Title : $"{item.Title}（未找到）",
+            Tag = item,
+            Margin = new Thickness(0, 0, 0, 8),
+            HorizontalContentAlignment = HorizontalAlignment.Left,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            Padding = new Thickness(10, 6, 10, 6),
+            ToolTip = item.Path
+        };
+
+        if (!item.Exists)
+        {
+            button.Foreground = Brushes.Firebrick;
+        }
+
+        button.PreviewMouseLeftButtonDown += RecordFileButton_PreviewMouseLeftButtonDown;
+        return button;
+    }
+
+    private IEnumerable<RecordFileItem> BuildSymbolFileItems(string value)
+    {
+        var normalized = value.Replace('/', '\\');
+        var libraryPart = normalized.Split('\\', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(libraryPart) || string.IsNullOrWhiteSpace(_settings.SymbolLibraryPath))
+        {
+            yield break;
+        }
+
+        var fileName = libraryPart.EndsWith(".olb", StringComparison.OrdinalIgnoreCase) ? libraryPart : libraryPart + ".olb";
+        var path = Path.Combine(_settings.SymbolLibraryPath, fileName);
+        yield return new RecordFileItem($"符号库：{fileName}", path, File.Exists(path));
+    }
+
+    private IEnumerable<RecordFileItem> BuildFootprintFileItems(string value)
+    {
+        if (string.IsNullOrWhiteSpace(_settings.FootprintLibraryPath))
+        {
+            yield break;
+        }
+
+        var names = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var name in names)
+        {
+            foreach (var extension in new[] { ".psm", ".dra" })
+            {
+                var path = Path.Combine(_settings.FootprintLibraryPath, name + extension);
+                yield return new RecordFileItem($"封装：{name}{extension}", path, File.Exists(path));
+            }
+        }
+    }
+
+    private IEnumerable<RecordFileItem> BuildModel3DFileItems(string value)
+    {
+        if (File.Exists(value))
+        {
+            yield return new RecordFileItem($"3D：{Path.GetFileName(value)}", value, true);
+            yield break;
+        }
+
+        if (string.IsNullOrWhiteSpace(_settings.Model3DLibraryPath) || !Directory.Exists(_settings.Model3DLibraryPath))
+        {
+            yield break;
+        }
+
+        var baseNames = value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var baseName in baseNames)
+        {
+            var matchedFiles = Directory.EnumerateFiles(_settings.Model3DLibraryPath, baseName + ".*", SearchOption.TopDirectoryOnly).ToList();
+            if (matchedFiles.Count == 0)
+            {
+                yield return new RecordFileItem($"3D：{baseName}", Path.Combine(_settings.Model3DLibraryPath, baseName), false);
+                continue;
+            }
+
+            foreach (var file in matchedFiles)
+            {
+                yield return new RecordFileItem($"3D：{Path.GetFileName(file)}", file, true);
+            }
+        }
     }
 
     private void ClearSelectedFiles()
@@ -403,6 +623,104 @@ public partial class MainWindow : Window
         Model3DFileBox.ToolTip = null;
         PinFileBox.Clear();
         PinFileBox.ToolTip = null;
+    }
+
+    private void ClearRecordFiles()
+    {
+        SymbolFilesPanel.Children.Clear();
+        FootprintFilesPanel.Children.Clear();
+        Model3DFilesPanel.Children.Clear();
+        SymbolFilesGroupBox.Visibility = Visibility.Collapsed;
+        FootprintFilesGroupBox.Visibility = Visibility.Collapsed;
+        Model3DFilesGroupBox.Visibility = Visibility.Collapsed;
+    }
+
+    private void RecordFileButton_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not Button { Tag: RecordFileItem item })
+        {
+            return;
+        }
+
+        try
+        {
+            if ((Keyboard.Modifiers & ModifierKeys.Alt) == ModifierKeys.Alt)
+            {
+                OpenRecordFilePath(item.Path);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.ClickCount >= 2)
+            {
+                OpenRecordFile(item.Path);
+                e.Handled = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError("打开文件失败：" + ex.Message);
+        }
+    }
+
+    private void OpenRecordFile(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        if (File.Exists(path))
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = path,
+                UseShellExecute = true
+            });
+            return;
+        }
+
+        var directory = Path.GetDirectoryName(path);
+        if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+        {
+            OpenRecordFilePath(path);
+            return;
+        }
+
+        MessageBox.Show(this, "找不到对应文件或目录。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void OpenRecordFilePath(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return;
+        }
+
+        var directory = File.Exists(path) ? Path.GetDirectoryName(path) : Path.GetDirectoryName(path) ?? path;
+        if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+        {
+            var arguments = File.Exists(path)
+                ? $"/select,\"{path}\""
+                : $"\"{directory}\"";
+
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = "explorer.exe",
+                Arguments = arguments,
+                UseShellExecute = true
+            });
+            return;
+        }
+
+        try
+        {
+            MessageBox.Show(this, "找不到对应文件或目录。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            ShowError("打开文件失败：" + ex.Message);
+        }
     }
 
     private void ApplySelectedFilesToForm()
@@ -440,6 +758,11 @@ public partial class MainWindow : Window
         if (string.IsNullOrWhiteSpace(symbolName))
         {
             return null;
+        }
+
+        if (symbolName.Contains('\\') || symbolName.Contains('/'))
+        {
+            return symbolName.Replace('/', '\\');
         }
 
         var targetPath = GetSelectedTargetSymbolLibraryPath();
@@ -505,6 +828,52 @@ public partial class MainWindow : Window
     private static string NormalizeColumnName(string value)
     {
         return value.Replace(" ", string.Empty).Replace("_", string.Empty).Replace("-", string.Empty);
+    }
+
+    private string? ResolveTableNameByPartNumber(string partNumber)
+    {
+        var matched = _settings.TablePartNumberPrefixes
+            .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
+            .OrderByDescending(pair => pair.Value.Length)
+            .FirstOrDefault(pair => partNumber.StartsWith(pair.Value, StringComparison.OrdinalIgnoreCase));
+
+        return string.IsNullOrWhiteSpace(matched.Key) ? null : matched.Key;
+    }
+
+    private async Task SelectTableAsync(string tableName)
+    {
+        if (TableComboBox.ItemsSource is null)
+        {
+            await RefreshTablesAsync();
+        }
+
+        if (TableComboBox.ItemsSource is IEnumerable<string> tables)
+        {
+            var matched = tables.FirstOrDefault(item => string.Equals(item, tableName, StringComparison.OrdinalIgnoreCase));
+            if (matched is null)
+            {
+                throw new InvalidOperationException($"在当前数据库中找不到表：{tableName}");
+            }
+
+            if (!string.Equals(TableComboBox.SelectedItem?.ToString(), matched, StringComparison.OrdinalIgnoreCase))
+            {
+                TableComboBox.SelectedItem = matched;
+            }
+        }
+    }
+
+    private async Task RefreshTablesAsync()
+    {
+        var tables = await _databaseService.GetTablesAsync(_settings);
+        TableComboBox.ItemsSource = tables;
+        if (tables.Count > 0)
+        {
+            TableComboBox.SelectedIndex = 0;
+        }
+        else
+        {
+            ClearDynamicForm();
+        }
     }
 
     private string GetSelectedTableName()
