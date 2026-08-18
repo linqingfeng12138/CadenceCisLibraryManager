@@ -7,5 +7,27 @@
         <Style TargetType="Window">
             <Setter Property="Icon" Value="Assets/AppIcon.ico" />
         </Style>
+
+        <Style x:Key="SymbolTextStyle" TargetType="TextBlock">
+            <Setter Property="FontFamily" Value="Segoe MDL2 Assets" />
+            <Setter Property="FontSize" Value="14" />
+            <Setter Property="VerticalAlignment" Value="Center" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="PasswordBox">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
+
+        <Style TargetType="ComboBox">
+            <Setter Property="Height" Value="30" />
+            <Setter Property="VerticalContentAlignment" Value="Center" />
+        </Style>
     </Application.Resources>
 </Application>

@@ -42,34 +42,67 @@
 
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="封装文件" VerticalAlignment="Center" Margin="0,0,8,8" />
                 <TextBox Grid.Row="0" Grid.Column="1" x:Name="FootprintFilesBox" IsReadOnly="True" Margin="0,0,8,8" ToolTip="请选择 Allegro 封装 .psm 与 .dra 文件" />
-                <Button Grid.Row="0" Grid.Column="2" Content="浏览" Width="90" Margin="0,0,0,8" Click="BrowseFootprintFiles_Click" />
+                <Button Grid.Row="0" Grid.Column="2" Width="36" Margin="0,0,0,8" Click="BrowseFootprintFiles_Click" ToolTip="浏览">
+                    <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE712;" Margin="0" HorizontalAlignment="Center" />
+                </Button>
 
                 <TextBlock Grid.Row="1" Grid.Column="0" Text="源符号库" VerticalAlignment="Center" Margin="0,0,8,8" />
                 <TextBox Grid.Row="1" Grid.Column="1" x:Name="SourceSymbolLibraryBox" IsReadOnly="True" Margin="0,0,8,8" ToolTip="选择需要打开的源 .olb 符号库" />
-                <Button Grid.Row="1" Grid.Column="2" Content="浏览" Width="90" Margin="0,0,12,8" Click="BrowseSourceSymbolLibrary_Click" />
+                <Button Grid.Row="1" Grid.Column="2" Width="36" Margin="0,0,12,8" Click="BrowseSourceSymbolLibrary_Click" ToolTip="浏览">
+                    <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE712;" Margin="0" HorizontalAlignment="Center" />
+                </Button>
                 <TextBlock Grid.Row="1" Grid.Column="3" Text="目标符号库" VerticalAlignment="Center" Margin="0,0,8,8" />
                 <ComboBox Grid.Row="1" Grid.Column="4" x:Name="TargetSymbolLibraryComboBox" Margin="0,0,8,8" SelectionChanged="TargetSymbolLibrary_SelectionChanged" />
-                <Button Grid.Row="1" Grid.Column="5" Content="刷新" Width="70" Margin="0,0,8,8" Click="RefreshSymbolLibraries_Click" />
-                <Button Grid.Row="1" Grid.Column="6" Content="打开文件夹" Width="100" Margin="0,0,0,8" Click="OpenSymbolLibraryFolders_Click" />
+                <Button Grid.Row="1" Grid.Column="5" Width="70" Margin="0,0,8,8" Click="RefreshSymbolLibraries_Click">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE72C;" />
+                        <TextBlock Text="刷新" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
+                <Button Grid.Row="1" Grid.Column="6" Width="100" Margin="0,0,0,8" Click="OpenSymbolLibraryFolders_Click">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE8B7;" />
+                        <TextBlock Text="文件夹" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
 
                 <TextBlock Grid.Row="2" Grid.Column="0" Text="3D 模型文件" VerticalAlignment="Center" Margin="0,0,8,8" />
                 <TextBox Grid.Row="2" Grid.Column="1" x:Name="Model3DFileBox" IsReadOnly="True" Margin="0,0,8,8" />
-                <Button Grid.Row="2" Grid.Column="2" Content="浏览" Width="90" Margin="0,0,0,8" Click="BrowseModel3DFile_Click" />
+                <Button Grid.Row="2" Grid.Column="2" Width="36" Margin="0,0,0,8" Click="BrowseModel3DFile_Click" ToolTip="浏览">
+                    <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE712;" Margin="0" HorizontalAlignment="Center" />
+                </Button>
 
                 <TextBlock Grid.Row="3" Grid.Column="0" Text="焊盘/引脚文件" VerticalAlignment="Center" Margin="0,0,8,0" />
                 <TextBox Grid.Row="3" Grid.Column="1" x:Name="PinFileBox" IsReadOnly="True" Margin="0,0,8,0" ToolTip="选择 Allegro Padstack 与 Library 文件：.pad/.osm/.bsm/.fsm/.ssm" />
-                <Button Grid.Row="3" Grid.Column="2" Content="浏览" Width="90" Click="BrowsePinFile_Click" />
+                <Button Grid.Row="3" Grid.Column="2" Width="36" Click="BrowsePinFile_Click" ToolTip="浏览">
+                    <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE712;" Margin="0" HorizontalAlignment="Center" />
+                </Button>
             </Grid>
         </Border>
 
         <StackPanel Grid.Row="2" Margin="0,0,0,12">
             <GroupBox Header="新建" Padding="10" Margin="0,0,0,8">
                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" ItemHeight="30">
-                    <Button x:Name="RefreshTablesButton" Content="读取表" Width="80" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" Click="RefreshTables_Click" />
+                    <Button x:Name="RefreshTablesButton" Width="90" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" Click="RefreshTables_Click">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE895;" />
+                            <TextBlock Text="读取表" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <TextBlock Text="数据库表" VerticalAlignment="Center" Margin="0,0,6,0" />
                     <ComboBox x:Name="TableComboBox" Width="260" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" SelectionChanged="TableComboBox_SelectionChanged" />
-                    <Button x:Name="LoadColumnsButton" Content="生成表单" Width="90" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" Click="LoadColumns_Click" />
-                    <Button x:Name="GenerateNumberButton" Content="更新编号" Width="90" Height="30" VerticalContentAlignment="Center" Click="GenerateNumber_Click" />
+                    <Button x:Name="LoadColumnsButton" Width="100" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" Click="LoadColumns_Click">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE70F;" />
+                            <TextBlock Text="表单" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="GenerateNumberButton" Width="100" Height="30" VerticalContentAlignment="Center" Click="GenerateNumber_Click">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE8D2;" />
+                            <TextBlock Text="编号" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
             </GroupBox>
 
@@ -77,7 +110,12 @@
                 <WrapPanel Orientation="Horizontal" VerticalAlignment="Center" ItemHeight="30">
                     <TextBlock Text="Part Number" VerticalAlignment="Center" Margin="0,0,8,0" />
                     <TextBox x:Name="PartNumberSearchBox" Width="260" Height="30" VerticalContentAlignment="Center" Margin="0,0,8,0" ToolTip="输入前缀-ID，例如 RES-00198" />
-                    <Button x:Name="FindRecordButton" Content="查找记录" Width="90" Height="30" VerticalContentAlignment="Center" Click="FindRecord_Click" />
+                    <Button x:Name="FindRecordButton" Width="100" Height="30" VerticalContentAlignment="Center" Click="FindRecord_Click">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                            <TextBlock Style="{StaticResource SymbolTextStyle}" Text="&#xE721;" />
+                            <TextBlock Text="查找" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                 </WrapPanel>
             </GroupBox>
         </StackPanel>

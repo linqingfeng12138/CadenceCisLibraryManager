@@ -52,6 +52,26 @@ public sealed class DatabaseService
         return connection.State == System.Data.ConnectionState.Open;
     }
 
+    public async Task<IReadOnlyList<string>> GetDistinctColumnValuesAsync(AppSettings settings, string tableName, string columnName, int maxCount = 200)
+    {
+        await using var connection = await OpenConnectionAsync(settings);
+        var sql = $"select distinct {EscapeIdentifier(columnName)} from {EscapeIdentifier(tableName)} where {EscapeIdentifier(columnName)} is not null and trim({EscapeIdentifier(columnName)}) <> '' order by {EscapeIdentifier(columnName)} limit @maxCount";
+        await using var command = new MySqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@maxCount", maxCount);
+
+        var values = new List<string>();
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (!reader.IsDBNull(0))
+            {
+                values.Add(reader.GetValue(0).ToString() ?? string.Empty);
+            }
+        }
+
+        return values;
+    }
+
     public string? FindPartNumberColumn(IEnumerable<ColumnInfo> columns, AppSettings settings)
     {
         return columns.Select(c => c.Name).FirstOrDefault(name => MatchesConfiguredColumn(name, settings.PartNumberColumnNames));

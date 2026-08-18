@@ -15,7 +15,7 @@ public partial class MainWindow : Window
     private readonly SettingsService _settingsService = new();
     private readonly DatabaseService _databaseService = new();
     private readonly FileLibraryService _fileLibraryService = new();
-    private readonly Dictionary<string, TextBox> _inputs = [];
+    private readonly Dictionary<string, Control> _inputs = [];
     private readonly Dictionary<FileColumnKind, List<string>> _selectedFiles = [];
     private string? _sourceSymbolLibraryPath;
     private IReadOnlyList<ColumnInfo> _columns = [];
@@ -33,8 +33,14 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
-        _settings = await _settingsService.LoadAsync();
+        var loadResult = await _settingsService.LoadWithStatusAsync();
+        _settings = loadResult.Settings;
         LoadTargetSymbolLibraries();
+        if (loadResult.PasswordDecryptionFailed)
+        {
+            MessageBox.Show(this, "已保存的数据库密码无法在当前 Windows 用户环境下解密，可能是配置文件来自其他用户或电脑。请打开“设置”重新输入数据库密码并保存。", "密码解密失败", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
         SetStatus("设置已加载。请先读取表并生成表单。");
     }
 
@@ -113,13 +119,13 @@ public partial class MainWindow : Window
             await EnsureColumnsLoadedAsync();
             var tableName = GetSelectedTableName();
             var partNumberColumn = _databaseService.FindPartNumberColumn(_columns, _settings);
-            if (partNumberColumn is null || !_inputs.TryGetValue(partNumberColumn, out var input))
+            if (partNumberColumn is null || !_inputs.ContainsKey(partNumberColumn))
             {
                 MessageBox.Show(this, "当前表未发现可自动编号的列，请在设置中配置 Part Number 字段名。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            input.Text = await _databaseService.GenerateNextPartNumberAsync(_settings, tableName);
+            SetInputValue(partNumberColumn, await _databaseService.GenerateNextPartNumberAsync(_settings, tableName));
             SetStatus($"已更新编号列：{partNumberColumn}");
         }
         catch (Exception ex)
@@ -175,7 +181,7 @@ public partial class MainWindow : Window
             {
                 if (row.TryGetValue(input.Key, out var value))
                 {
-                    input.Value.Text = value ?? string.Empty;
+                    SetInputValue(input.Key, value ?? string.Empty);
                 }
             }
 
@@ -220,9 +226,9 @@ public partial class MainWindow : Window
                 {
                     values[column.Name] = await CopySelectedFilesForDatabaseAsync(kind, files);
                 }
-                else if (_inputs.TryGetValue(column.Name, out var input))
+                else if (_inputs.ContainsKey(column.Name))
                 {
-                    values[column.Name] = input.Text;
+                    values[column.Name] = GetInputValue(column.Name);
                 }
             }
 
@@ -256,9 +262,9 @@ public partial class MainWindow : Window
     private async Task EnsurePartNumberValueAsync(string tableName)
     {
         var partNumberColumn = _databaseService.FindPartNumberColumn(_columns, _settings);
-        if (partNumberColumn is not null && _inputs.TryGetValue(partNumberColumn, out var input) && string.IsNullOrWhiteSpace(input.Text))
+        if (partNumberColumn is not null && string.IsNullOrWhiteSpace(GetInputValue(partNumberColumn)))
         {
-            input.Text = await _databaseService.GenerateNextPartNumberAsync(_settings, tableName);
+            SetInputValue(partNumberColumn, await _databaseService.GenerateNextPartNumberAsync(_settings, tableName));
         }
     }
 
@@ -440,9 +446,9 @@ public partial class MainWindow : Window
     private async Task GenerateInitialPartNumberAsync(string tableName)
     {
         var partNumberColumn = _databaseService.FindPartNumberColumn(_columns, _settings);
-        if (partNumberColumn is not null && _inputs.TryGetValue(partNumberColumn, out var input) && string.IsNullOrWhiteSpace(input.Text))
+        if (partNumberColumn is not null && _inputs.ContainsKey(partNumberColumn) && string.IsNullOrWhiteSpace(GetInputValue(partNumberColumn)))
         {
-            input.Text = await _databaseService.GenerateNextPartNumberAsync(_settings, tableName);
+            SetInputValue(partNumberColumn, await _databaseService.GenerateNextPartNumberAsync(_settings, tableName));
         }
     }
 
@@ -463,11 +469,103 @@ public partial class MainWindow : Window
             row.Children.Add(label);
 
             var textBox = new TextBox { MinWidth = 260, ToolTip = column.DataType };
-            Grid.SetColumn(textBox, 1);
-            row.Children.Add(textBox);
+            if (ShouldEnableSuggestions(column.Name))
+            {
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+
+                Grid.SetColumn(textBox, 1);
+                row.Children.Add(textBox);
+
+                var button = new Button
+                {
+                    Content = new TextBlock
+                    {
+                        Text = "\uE712",
+                        Style = (Style)FindResource("SymbolTextStyle"),
+                        Margin = new Thickness(0),
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    },
+                    Width = 36,
+                    Height = 28,
+                    Margin = new Thickness(8, 0, 0, 0),
+                    Tag = column.Name,
+                    ToolTip = "浏览候选值"
+                };
+                button.Click += BrowseCandidates_Click;
+                Grid.SetColumn(button, 2);
+                row.Children.Add(button);
+            }
+            else
+            {
+                Grid.SetColumn(textBox, 1);
+                row.Children.Add(textBox);
+            }
+
             _inputs[column.Name] = textBox;
 
             FormPanel.Children.Add(row);
+        }
+    }
+
+    private bool ShouldEnableSuggestions(string columnName)
+    {
+        return MatchesConfiguredColumn(columnName, _settings.FootprintColumnNames)
+            || MatchesConfiguredColumn(columnName, _settings.SymbolColumnNames)
+            || MatchesConfiguredColumn(columnName, new[] { "器件类型", "Device Type", "Part Type", "PartType", "Type", "Category", "器件类别" });
+    }
+
+    private async void BrowseCandidates_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string columnName })
+        {
+            return;
+        }
+
+        try
+        {
+            var tableName = GetSelectedTableName();
+            var values = await _databaseService.GetDistinctColumnValuesAsync(_settings, tableName, columnName);
+            if (MatchesConfiguredColumn(columnName, _settings.FootprintColumnNames))
+            {
+                values = values
+                    .SelectMany(value => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+
+            var selectedValues = GetInputValue(columnName)
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            var dialog = new CandidateSelectionWindow($"选择 {columnName}", values, selectedValues)
+            {
+                Owner = this
+            };
+
+            if (dialog.ShowDialog() == true)
+            {
+                SetInputValue(columnName, string.Join(",", dialog.SelectedValues));
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowError("读取候选列表失败：" + ex.Message);
+        }
+    }
+
+    private string GetInputValue(string columnName)
+    {
+        return _inputs.TryGetValue(columnName, out var control) && control is TextBox textBox
+            ? textBox.Text
+            : string.Empty;
+    }
+
+    private void SetInputValue(string columnName, string value)
+    {
+        if (_inputs.TryGetValue(columnName, out var control) && control is TextBox textBox)
+        {
+            textBox.Text = value;
         }
     }
 
@@ -737,24 +835,28 @@ public partial class MainWindow : Window
         }
 
         var columnName = _columns.Select(c => c.Name).FirstOrDefault(name => GetFileColumnKind(name) == kind);
-        if (columnName is null || !_inputs.TryGetValue(columnName, out var input))
+        if (columnName is null || !_inputs.ContainsKey(columnName))
         {
             return;
         }
 
         var databaseFiles = GetDatabaseSourceFiles(files, kind);
-        input.Text = string.Join(",", databaseFiles.Select(GetStoredPreviewValue));
-        input.ToolTip = string.Join(Environment.NewLine, databaseFiles);
+        SetInputValue(columnName, string.Join(",", databaseFiles.Select(GetStoredPreviewValue)));
+
+        if (_inputs.TryGetValue(columnName, out var input) && input is TextBox textBox)
+        {
+            textBox.ToolTip = string.Join(Environment.NewLine, databaseFiles);
+        }
     }
 
     private string? GetSymbolDatabaseValue(string columnName)
     {
-        if (!_inputs.TryGetValue(columnName, out var input))
+        if (!_inputs.ContainsKey(columnName))
         {
             return null;
         }
 
-        var symbolName = input.Text.Trim();
+        var symbolName = GetInputValue(columnName).Trim();
         if (string.IsNullOrWhiteSpace(symbolName))
         {
             return null;
