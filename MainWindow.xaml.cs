@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -16,6 +17,7 @@ public partial class MainWindow : Window
     private readonly DatabaseService _databaseService = new();
     private readonly FileLibraryService _fileLibraryService = new();
     private readonly Dictionary<string, Control> _inputs = [];
+    private readonly Dictionary<string, ComboBox> _symbolLibraryInputs = [];
     private readonly Dictionary<FileColumnKind, List<string>> _selectedFiles = [];
     private string? _sourceSymbolLibraryPath;
     private IReadOnlyList<ColumnInfo> _columns = [];
@@ -33,6 +35,7 @@ public partial class MainWindow : Window
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        Title = GetWindowTitleWithVersion();
         var loadResult = await _settingsService.LoadWithStatusAsync();
         _settings = loadResult.Settings;
         LoadTargetSymbolLibraries();
@@ -42,6 +45,13 @@ public partial class MainWindow : Window
         }
 
         SetStatus("设置已加载。请先读取表并生成表单。");
+    }
+
+    private static string GetWindowTitleWithVersion()
+    {
+        const string baseTitle = "OrCAD CIS 库管理器";
+        var version = Assembly.GetExecutingAssembly().GetName().Version;
+        return version is null ? baseTitle : $"{baseTitle} v{version.Major}.{version.Minor}.{version.Build}";
     }
 
     private async void Settings_Click(object sender, RoutedEventArgs e)
@@ -181,7 +191,14 @@ public partial class MainWindow : Window
             {
                 if (row.TryGetValue(input.Key, out var value))
                 {
-                    SetInputValue(input.Key, value ?? string.Empty);
+                    if (MatchesConfiguredColumn(input.Key, _settings.SymbolColumnNames))
+                    {
+                        ApplySymbolValueToForm(input.Key, value ?? string.Empty);
+                    }
+                    else
+                    {
+                        SetInputValue(input.Key, value ?? string.Empty);
+                    }
                 }
             }
 
@@ -326,7 +343,7 @@ public partial class MainWindow : Window
             opened = true;
         }
 
-        var targetPath = GetSelectedTargetSymbolLibraryPath();
+        var targetPath = GetCurrentTargetSymbolLibraryPath();
         if (!string.IsNullOrWhiteSpace(targetPath))
         {
             OpenFolder(Path.GetDirectoryName(targetPath));
@@ -335,13 +352,17 @@ public partial class MainWindow : Window
 
         if (!opened)
         {
-            MessageBox.Show(this, "请先选择源符号库，并在目标符号库列表中选择一个 .olb 文件。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
+            MessageBox.Show(this, "请先选择源符号库，或在表单中的符号字段选择一个目标 .olb 库。", "提示", MessageBoxButton.OK, MessageBoxImage.Information);
         }
     }
 
     private void LoadTargetSymbolLibraries()
     {
-        TargetSymbolLibraryComboBox.ItemsSource = null;
+        foreach (var comboBox in _symbolLibraryInputs.Values)
+        {
+            comboBox.ItemsSource = null;
+        }
+
         if (string.IsNullOrWhiteSpace(_settings.SymbolLibraryPath) || !Directory.Exists(_settings.SymbolLibraryPath))
         {
             SetStatus("目标符号库目录未设置或不存在，无法检索 .olb 文件。");
@@ -353,10 +374,18 @@ public partial class MainWindow : Window
             .Where(fileName => !string.IsNullOrWhiteSpace(fileName))
             .OrderBy(fileName => fileName)
             .ToList();
-        TargetSymbolLibraryComboBox.ItemsSource = libraries;
+        foreach (var comboBox in _symbolLibraryInputs.Values)
+        {
+            comboBox.ItemsSource = libraries;
+        }
+
         if (libraries.Count > 0)
         {
-            TargetSymbolLibraryComboBox.SelectedIndex = 0;
+            foreach (var comboBox in _symbolLibraryInputs.Values.Where(comboBox => comboBox.SelectedItem is null))
+            {
+                comboBox.SelectedIndex = 0;
+            }
+
             SetStatus($"已在目标符号库目录中找到 {libraries.Count} 个 .olb 文件。");
         }
         else
@@ -365,9 +394,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private string? GetSelectedTargetSymbolLibraryPath()
+    private string? GetCurrentTargetSymbolLibraryPath()
     {
-        var fileName = TargetSymbolLibraryComboBox.SelectedItem?.ToString();
+        var fileName = _symbolLibraryInputs.Values
+            .Select(comboBox => comboBox.SelectedItem?.ToString())
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
         return string.IsNullOrWhiteSpace(fileName) ? null : Path.Combine(_settings.SymbolLibraryPath, fileName);
     }
 
@@ -456,6 +488,7 @@ public partial class MainWindow : Window
     {
         FormPanel.Children.Clear();
         _inputs.Clear();
+        _symbolLibraryInputs.Clear();
 
         foreach (var column in columns.Where(c => !c.IsAutoIncrement && !c.IsGenerated))
         {
@@ -469,7 +502,55 @@ public partial class MainWindow : Window
             row.Children.Add(label);
 
             var textBox = new TextBox { MinWidth = 260, ToolTip = column.DataType };
-            if (ShouldEnableSuggestions(column.Name))
+            if (MatchesConfiguredColumn(column.Name, _settings.SymbolColumnNames))
+            {
+                row.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+
+                var comboBox = new ComboBox
+                {
+                    Margin = new Thickness(0, 0, 8, 0),
+                    VerticalContentAlignment = VerticalAlignment.Center,
+                    MinWidth = 260
+                };
+                Grid.SetColumn(comboBox, 1);
+                row.Children.Add(comboBox);
+
+                var refreshButton = new Button
+                {
+                    Content = new StackPanel
+                    {
+                        Orientation = Orientation.Horizontal,
+                        HorizontalAlignment = HorizontalAlignment.Center,
+                        Children =
+                        {
+                            new TextBlock
+                            {
+                                Text = "\uE72C",
+                                Style = (Style)FindResource("SymbolTextStyle")
+                            },
+                            new TextBlock
+                            {
+                                Text = "刷新",
+                                VerticalAlignment = VerticalAlignment.Center
+                            }
+                        }
+                    },
+                    Width = 70,
+                    Height = 28,
+                    Margin = new Thickness(0, 0, 8, 0),
+                    ToolTip = "刷新符号库列表"
+                };
+                refreshButton.Click += RefreshSymbolLibraries_Click;
+                Grid.SetColumn(refreshButton, 2);
+                row.Children.Add(refreshButton);
+
+                Grid.SetColumn(textBox, 3);
+                row.Children.Add(textBox);
+                _symbolLibraryInputs[column.Name] = comboBox;
+            }
+            else if (ShouldEnableSuggestions(column.Name))
             {
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
@@ -505,6 +586,8 @@ public partial class MainWindow : Window
 
             FormPanel.Children.Add(row);
         }
+
+        LoadTargetSymbolLibraries();
     }
 
     private bool ShouldEnableSuggestions(string columnName)
@@ -867,14 +950,60 @@ public partial class MainWindow : Window
             return symbolName.Replace('/', '\\');
         }
 
-        var targetPath = GetSelectedTargetSymbolLibraryPath();
-        if (string.IsNullOrWhiteSpace(targetPath))
+        var libraryName = GetSelectedSymbolLibraryName(columnName);
+        if (string.IsNullOrWhiteSpace(libraryName))
         {
             return symbolName;
         }
 
-        var libraryName = RemoveFileExtension(Path.GetFileName(targetPath));
         return string.IsNullOrWhiteSpace(libraryName) ? symbolName : $"{libraryName}\\{symbolName}";
+    }
+
+    private void ApplySymbolValueToForm(string columnName, string value)
+    {
+        var normalized = value.Replace('/', '\\');
+        var separatorIndex = normalized.IndexOf('\\');
+        if (separatorIndex <= 0)
+        {
+            SetInputValue(columnName, value);
+            return;
+        }
+
+        var libraryName = normalized[..separatorIndex];
+        var symbolName = normalized[(separatorIndex + 1)..];
+
+        if (_symbolLibraryInputs.TryGetValue(columnName, out var comboBox))
+        {
+            var expectedFileName = libraryName.EndsWith(".olb", StringComparison.OrdinalIgnoreCase) ? libraryName : libraryName + ".olb";
+            var matchedItem = comboBox.Items.Cast<object?>()
+                .Select(item => item?.ToString())
+                .FirstOrDefault(item => string.Equals(item, expectedFileName, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(RemoveFileExtension(item ?? string.Empty), libraryName, StringComparison.OrdinalIgnoreCase));
+
+            if (!string.IsNullOrWhiteSpace(matchedItem))
+            {
+                comboBox.SelectedItem = matchedItem;
+            }
+        }
+
+        SetInputValue(columnName, symbolName);
+    }
+
+    private string? GetSelectedSymbolLibraryName(string columnName)
+    {
+        if (_symbolLibraryInputs.TryGetValue(columnName, out var comboBox))
+        {
+            var fileName = comboBox.SelectedItem?.ToString();
+            return string.IsNullOrWhiteSpace(fileName) ? null : RemoveFileExtension(fileName);
+        }
+
+        var targetPath = GetCurrentTargetSymbolLibraryPath();
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            return null;
+        }
+
+        return RemoveFileExtension(Path.GetFileName(targetPath));
     }
 
     private static IReadOnlyList<string> GetDatabaseSourceFiles(IReadOnlyList<string> files, FileColumnKind kind)
