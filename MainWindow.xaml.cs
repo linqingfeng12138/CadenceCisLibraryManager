@@ -377,15 +377,18 @@ public partial class MainWindow : Window
         foreach (var comboBox in _symbolLibraryInputs.Values)
         {
             comboBox.ItemsSource = libraries;
+            if (comboBox.SelectedItem is not null)
+            {
+                var selected = comboBox.SelectedItem.ToString();
+                if (string.IsNullOrWhiteSpace(selected) || !libraries.Any(item => string.Equals(item, selected, StringComparison.OrdinalIgnoreCase)))
+                {
+                    comboBox.SelectedItem = null;
+                }
+            }
         }
 
         if (libraries.Count > 0)
         {
-            foreach (var comboBox in _symbolLibraryInputs.Values.Where(comboBox => comboBox.SelectedItem is null))
-            {
-                comboBox.SelectedIndex = 0;
-            }
-
             SetStatus($"已在目标符号库目录中找到 {libraries.Count} 个 .olb 文件。");
         }
         else
@@ -507,6 +510,7 @@ public partial class MainWindow : Window
                 row.ColumnDefinitions[1].Width = new GridLength(1, GridUnitType.Star);
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+                row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
                 var comboBox = new ComboBox
                 {
@@ -548,6 +552,26 @@ public partial class MainWindow : Window
 
                 Grid.SetColumn(textBox, 3);
                 row.Children.Add(textBox);
+
+                var browseButton = new Button
+                {
+                    Content = new TextBlock
+                    {
+                        Text = "\uE712",
+                        Style = (Style)FindResource("SymbolTextStyle"),
+                        Margin = new Thickness(0),
+                        HorizontalAlignment = HorizontalAlignment.Center
+                    },
+                    Width = 36,
+                    Height = 28,
+                    Margin = new Thickness(8, 0, 0, 0),
+                    Tag = column.Name,
+                    ToolTip = "浏览候选值"
+                };
+                browseButton.Click += BrowseCandidates_Click;
+                Grid.SetColumn(browseButton, 4);
+                row.Children.Add(browseButton);
+
                 _symbolLibraryInputs[column.Name] = comboBox;
             }
             else if (ShouldEnableSuggestions(column.Name))
@@ -961,6 +985,11 @@ public partial class MainWindow : Window
 
     private void ApplySymbolValueToForm(string columnName, string value)
     {
+        if (_symbolLibraryInputs.TryGetValue(columnName, out var comboBox))
+        {
+            comboBox.SelectedItem = null;
+        }
+
         var normalized = value.Replace('/', '\\');
         var separatorIndex = normalized.IndexOf('\\');
         if (separatorIndex <= 0)
@@ -972,7 +1001,7 @@ public partial class MainWindow : Window
         var libraryName = normalized[..separatorIndex];
         var symbolName = normalized[(separatorIndex + 1)..];
 
-        if (_symbolLibraryInputs.TryGetValue(columnName, out var comboBox))
+        if (_symbolLibraryInputs.TryGetValue(columnName, out comboBox))
         {
             var expectedFileName = libraryName.EndsWith(".olb", StringComparison.OrdinalIgnoreCase) ? libraryName : libraryName + ".olb";
             var matchedItem = comboBox.Items.Cast<object?>()
